@@ -1,0 +1,1113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFC ePaper Image Converter</title>
+<style>
+  :root{
+    --paper:      #f4f1ea;   /* 纸面 */
+    --paper-card: #fbf9f4;   /* 卡片纸 */
+    --ink:        #191919;   /* 墨 */
+    --ink-soft:   #6f6a61;   /* 淡墨 */
+    --ink-faint:  #b9b4a8;   /* 极淡墨 */
+    --line:       #191919;
+    --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Courier New",monospace;
+    --serif: "Songti SC","Noto Serif SC","Source Han Serif SC",STSong,Georgia,"Times New Roman",serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ -webkit-text-size-adjust:100%; }
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--serif);
+    font-size:16px;
+    line-height:1.6;
+    min-height:100vh;
+  }
+  .wrap{ max-width:1080px; margin:0 auto; padding:40px 20px 64px; }
+
+  /* ============ 报头 ============ */
+  header{ margin-bottom:36px; }
+  .mast-top{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+    color:var(--ink-soft); text-transform:uppercase;
+    border-bottom:1px solid var(--line); padding-bottom:8px;
+  }
+  h1{
+    font-size:clamp(28px,4.6vw,44px);
+    font-weight:600; letter-spacing:.01em;
+    margin:26px 0 4px;
+  }
+  .tagline{
+    font-family:var(--mono); font-size:12px; letter-spacing:.22em;
+    color:var(--ink-soft); text-transform:uppercase;
+  }
+  #ditherStrip{ display:block; width:100%; height:14px; margin-top:22px; image-rendering:pixelated; }
+
+  /* ============ 主区 ============ */
+  main{
+    display:grid; grid-template-columns:1fr 1fr; gap:24px;
+    align-items:start; margin-bottom:24px;
+  }
+  .panel{
+    background:var(--paper-card);
+    border:1px solid var(--line);
+    padding:18px;
+  }
+  .panel-title{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--mono); font-size:11px; letter-spacing:.16em;
+    color:var(--ink-soft); text-transform:uppercase;
+    border-bottom:1px solid var(--ink-faint);
+    padding-bottom:8px; margin-bottom:14px;
+  }
+  .panel-title .hint{ letter-spacing:.04em; text-transform:none; }
+
+  /* 上传 */
+  .dropzone{
+    border:1px dashed var(--ink);
+    padding:36px 16px;
+    text-align:center; cursor:pointer;
+    transition:background .15s;
+    user-select:none;
+  }
+  .dropzone:hover, .dropzone.drag{ background:#eceade; }
+  .dropzone .dz-icon{
+    font-family:var(--mono); font-size:22px; line-height:1;
+    display:block; margin-bottom:10px; color:var(--ink);
+  }
+  .dropzone .dz-main{ font-size:17px; letter-spacing:.06em; }
+  .dropzone .dz-sub{
+    font-family:var(--mono); font-size:11px; color:var(--ink-soft);
+    margin-top:6px; letter-spacing:.06em;
+  }
+  .filebar{
+    display:none; align-items:center; justify-content:space-between; gap:12px;
+    font-family:var(--mono); font-size:12px;
+  }
+  .filebar .fname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .filebar .fmeta{ color:var(--ink-soft); white-space:nowrap; }
+  .filebar.show{ display:flex; }
+  .filebar .mini{
+    font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+    border:1px solid var(--ink); background:none; color:var(--ink);
+    padding:4px 12px; cursor:pointer; white-space:nowrap;
+  }
+  .filebar .mini:hover{ background:var(--ink); color:var(--paper-card); }
+  #fileInput{ display:none; }
+
+  .err{
+    display:none; margin-top:12px;
+    font-family:var(--mono); font-size:12px;
+    border:1px solid var(--ink); padding:8px 12px;
+    background:#efe9dc;
+  }
+  .err.show{ display:block; }
+
+  /* 原图 */
+  .orig-box{ margin-top:24px; }
+  #origCanvas{
+    display:block; width:100%; background:#fff;
+    border:1px solid var(--ink-faint);
+    cursor:move; touch-action:none; user-select:none; -webkit-user-select:none;
+  }
+  .crop-tools{
+    display:none; justify-content:space-between; align-items:center; gap:10px;
+    margin-top:10px;
+    font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:.04em;
+  }
+  .crop-tools.show{ display:flex; }
+  .crop-tools span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .empty-note{
+    font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+    text-align:center; padding:28px 8px; border:1px solid var(--ink-faint);
+  }
+
+  /* ============ 墨水屏设备 ============ */
+  .bezel{
+    background:#222220;
+    border:1px solid #000;
+    border-radius:5px;
+    padding:16px 16px 10px;
+  }
+  .bezel .screen{
+    background:#fff;
+    border:1px solid #0c0c0c;
+    overflow:hidden;
+  }
+  #epCanvas{
+    display:block; width:100%;
+    image-rendering:pixelated;
+    aspect-ratio:250/122;
+  }
+  /* 刷新闪屏：模拟墨水屏全刷 */
+  .screen.refresh #epCanvas{ animation:einkRefresh .28s steps(1,end); }
+  @keyframes einkRefresh{
+    0%  { filter:invert(1); }
+    33% { filter:none; }
+    66% { filter:invert(1); }
+    100%{ filter:none; }
+  }
+  .bezel .bezel-label{
+    font-family:var(--mono); font-size:10px; letter-spacing:.24em;
+    color:#8a8782; text-align:center; padding-top:9px;
+    text-transform:uppercase;
+  }
+  .device-caption{
+    font-family:var(--mono); font-size:11px; color:var(--ink-soft);
+    text-align:center; margin-top:10px; letter-spacing:.08em;
+  }
+
+  /* ============ 控制项 ============ */
+  .controls{ margin-top:24px; }
+  .ctl-row{ margin-bottom:16px; }
+  .ctl-row:last-child{ margin-bottom:0; }
+  .ctl-label{
+    font-family:var(--mono); font-size:11px; letter-spacing:.14em;
+    color:var(--ink-soft); text-transform:uppercase; margin-bottom:8px;
+    display:flex; justify-content:space-between;
+  }
+  .seg{ display:flex; border:1px solid var(--line); }
+  .seg button{
+    flex:1; font-family:var(--serif); font-size:14px; letter-spacing:.08em;
+    padding:9px 0; background:none; border:none; color:var(--ink); cursor:pointer;
+  }
+  .seg button + button{ border-left:1px solid var(--line); }
+  .seg button.on{ background:var(--ink); color:var(--paper-card); }
+  .seg button:not(.on):hover{ background:#eceade; }
+
+  input[type=range]{
+    -webkit-appearance:none; appearance:none;
+    width:100%; height:22px; background:none; cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track{
+    height:2px; background:var(--ink);
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:14px; height:14px; background:var(--ink);
+    border:1px solid var(--ink); margin-top:-6px;
+  }
+  input[type=range]::-moz-range-track{ height:2px; background:var(--ink); }
+  input[type=range]::-moz-range-thumb{
+    width:12px; height:12px; background:var(--ink); border:none; border-radius:0;
+  }
+  .ctl-row.off{ opacity:.35; pointer-events:none; }
+  .mono-val{ font-family:var(--mono); letter-spacing:0; }
+
+  .chip-row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .chip{
+    font-family:var(--serif); font-size:14px; letter-spacing:.08em;
+    border:1px solid var(--line); background:none; color:var(--ink);
+    padding:8px 16px; cursor:pointer;
+  }
+  .chip.on{ background:var(--ink); color:var(--paper-card); }
+  .chip:not(.on):hover{ background:#eceade; }
+
+  /* ============ 输出 ============ */
+  .output{ margin-top:0; }
+  .stats{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:1px;
+    background:var(--ink-faint); border:1px solid var(--line); margin-bottom:18px;
+  }
+  .stat{
+    background:var(--paper-card); padding:12px 14px;
+  }
+  .stat .k{
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+    color:var(--ink-soft); text-transform:uppercase; margin-bottom:4px;
+  }
+  .stat .v{
+    font-family:var(--mono); font-size:17px; letter-spacing:.02em;
+  }
+  .hex-label{
+    font-family:var(--mono); font-size:11px; letter-spacing:.12em;
+    color:var(--ink-soft); margin-bottom:8px; text-transform:uppercase;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px;
+  }
+  .hexbox{
+    font-family:var(--mono); font-size:12px; line-height:1.7;
+    background:var(--paper-card); border:1px solid var(--line);
+    padding:14px 16px; word-break:break-all; color:var(--ink);
+    max-height:118px; overflow:hidden; position:relative;
+  }
+  .hexbox.dim::after{
+    content:"……"; position:absolute; right:14px; bottom:8px;
+    background:var(--paper-card); padding:0 6px;
+  }
+  .hex-empty{
+    font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+    border:1px dashed var(--ink-faint); padding:22px 16px; text-align:center;
+    line-height:2;
+  }
+  .actions{ display:flex; gap:12px; margin-top:18px; flex-wrap:wrap; }
+  .nfc-status{
+    font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+    margin-top:12px; letter-spacing:.04em; line-height:1.8; min-height:1.8em;
+  }
+  .btn{
+    font-family:var(--serif); font-size:15px; letter-spacing:.1em;
+    padding:12px 26px; cursor:pointer;
+    border:1px solid var(--line);
+  }
+  .btn-primary{ background:var(--ink); color:var(--paper-card); }
+  .btn-primary:hover{ background:#000; }
+  .btn-ghost{ background:none; color:var(--ink); }
+  .btn-ghost:hover{ background:#eceade; }
+  .btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .btn .ok{ color:inherit; }
+
+  /* 协议占位图 */
+  .proto{
+    font-family:var(--mono); font-size:12px; line-height:1.9;
+    color:var(--ink-soft); white-space:pre; overflow-x:auto;
+    padding:16px 4px;
+  }
+  .proto b{ color:var(--ink); font-weight:normal; }
+
+  /* ============ 页脚 ============ */
+  footer{
+    margin-top:40px; border-top:1px solid var(--line); padding-top:16px;
+    font-family:var(--mono); font-size:11px; line-height:2.1;
+    color:var(--ink-soft); letter-spacing:.03em;
+  }
+  footer .steps{ display:flex; gap:24px; flex-wrap:wrap; }
+  footer .step b{ color:var(--ink); font-weight:normal; }
+
+  @media (max-width:880px){
+    main{ grid-template-columns:1fr; }
+    .stats{ grid-template-columns:repeat(2,1fr); }
+    .orig-box{ margin-top:0; }
+    .wrap{ padding:24px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="mast-top">
+      <span>XEPR · V1</span>
+      <span>256 × 122 · 1-BIT · BW</span>
+    </div>
+    <h1>NFC ePaper Image Converter</h1>
+    <p class="tagline">图片 → 墨水屏 · 250 × 122 · XIAO</p>
+    <canvas id="ditherStrip" width="10" height="14"></canvas>
+  </header>
+
+  <main>
+    <!-- 左：输入 -->
+    <section>
+      <div class="panel">
+        <div class="panel-title">
+          <span>① 输入</span>
+          <span class="hint">JPG · PNG · WebP · ≤ 10 MB</span>
+        </div>
+
+        <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="上传图片">
+          <span class="dz-icon">▚▞</span>
+          <span class="dz-main">拖入图片，或点击选择</span>
+          <div class="dz-sub">也可以直接 Ctrl/⌘+V 粘贴 · <u id="testLink">使用测试图</u></div>
+        </div>
+
+        <div class="filebar" id="filebar">
+          <span class="fname" id="fName"></span>
+          <span class="fmeta" id="fMeta"></span>
+          <button class="mini" id="rebtn">更换</button>
+        </div>
+
+        <div class="err" id="err"></div>
+      </div>
+
+      <div class="panel orig-box">
+        <div class="panel-title">
+          <span>② 原图 · 裁剪</span>
+          <span class="hint" id="origMeta">—</span>
+        </div>
+        <canvas id="origCanvas" width="500" height="300" style="display:none"></canvas>
+        <div class="empty-note" id="origEmpty">尚未载入图片</div>
+        <div class="crop-tools" id="cropTools">
+          <span>拖动选区 · 角点缩放 · 点击空白处跳转选区</span>
+          <button class="mini" id="cropReset">重置</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右：墨水屏预览 + 控制 -->
+    <section>
+      <div class="panel">
+        <div class="panel-title">
+          <span>③ ePaper 预览</span>
+          <span class="hint">实际显示效果</span>
+        </div>
+        <div class="bezel">
+          <div class="screen" id="screen"><canvas id="epCanvas" width="500" height="244"></canvas></div>
+          <div class="bezel-label">XIAO · 2.13" E-PAPER</div>
+        </div>
+        <div class="device-caption">250 × 122 · 黑 / 白 · 1 bit</div>
+
+        <div class="controls">
+          <div class="ctl-row">
+            <div class="ctl-label"><span>二值化模式</span></div>
+            <div class="seg">
+              <button id="modeDither" class="on">抖动 Floyd–Steinberg</button>
+              <button id="modeThresh">阈值</button>
+            </div>
+          </div>
+          <div class="ctl-row off" id="threshRow">
+            <div class="ctl-label">
+              <span>阈值</span>
+              <span class="mono-val" id="threshVal">128</span>
+            </div>
+            <input type="range" id="thresh" min="1" max="255" value="128">
+          </div>
+          <div class="ctl-row">
+            <div class="ctl-label"><span>调整</span></div>
+            <div class="chip-row">
+              <button class="chip" id="invBtn" aria-pressed="false">反色</button>
+              <button class="chip" id="rotBtn">旋转 <span id="rotDeg">0°</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 输出 -->
+  <section class="panel output">
+    <div class="panel-title">
+      <span>④ 输出 · NFC 数据</span>
+      <span class="hint">XEPR1｜宽｜高｜HEX</span>
+    </div>
+
+    <div id="outEmpty">
+      <div class="hex-empty">转换后在此生成 NFC 数据<br>格式 XEPR1|256|122|&lt;HEX&gt; · 附带 .bin 二进制下载</div>
+      <div class="proto"><b>偏移  字段         长度     值</b>
+ 0     Header        4 B      "XEPR"
+ 4     Version       1 B      1
+ 5     Width         2 B BE   256
+ 7     Height        2 B BE   122
+ 9     Format        1 B      1 (BW1)
+10     Length        2 B BE   3904
+12     Image Data    3904 B   1-bit bitmap
+3916   CRC32         4 B BE   IEEE 802.3</div>
+    </div>
+
+    <div id="outBody" style="display:none">
+      <div class="stats">
+        <div class="stat"><div class="k">图像数据</div><div class="v">3,904 B</div></div>
+        <div class="stat"><div class="k">Hex 文本</div><div class="v" id="statHex">—</div></div>
+        <div class="stat"><div class="k">.bin 文件</div><div class="v">3,920 B</div></div>
+        <div class="stat"><div class="k">CRC32</div><div class="v" id="statCrc">—</div></div>
+      </div>
+      <div class="hex-label"><span>NFC Payload（Text Record）</span><span id="hexCount"></span></div>
+      <div class="hexbox dim" id="hexbox"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="nfcBtn" style="display:none">写入到 XIAO（Web NFC）</button>
+        <button class="btn btn-primary" id="copyBtn">复制 NFC 数据</button>
+        <button class="btn btn-ghost" id="dlBtn">下载 xiao_epaper.bin</button>
+      </div>
+      <div class="nfc-status" id="nfcStatus"></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="steps">
+      <span class="step"><b>1</b> Chrome/安卓：点「写入到 XIAO」后贴近即可</span>
+      <span class="step"><b>2</b> 或：复制数据 → NFC Tools → 写入 → 添加记录 → 文本</span>
+      <span class="step"><b>3</b> 贴近 XIAO 写入，屏幕即显示</span>
+    </div>
+    <div style="margin-top:8px">位序 MSB-first · 1=白 0=黑 · framebuffer 每行 32 B 对齐（与 Seeed 256×122 驱动一致）</div>
+  </footer>
+
+</div>
+
+<input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp">
+
+<script>
+/* =====================================================================
+ * 配置：与固件端约定对齐，如有出入改这里
+ * =================================================================== */
+const CFG = {
+  DISPLAY_W : 250,          // 实际可见像素
+  DISPLAY_H : 122,
+  FB_W      : 256,          // framebuffer 宽（行对齐 32 B）
+  FB_H      : 122,
+  MSB_FIRST : true,         // 字节内高位在前
+  ONE_IS_WHITE : true,      // 1 = 白
+  MAX_MB    : 10,
+};
+
+/* -------------------- 全局状态 -------------------- */
+const S = {
+  img: null,          // HTMLImageElement
+  fileName: '',
+  mode: 'dither',     // 'dither' | 'threshold'
+  threshold: 128,
+  invert: false,
+  rotate: 0,          // 0/90/180/270
+  crop: null,         // {x,y,w,h} 图片坐标，宽高比锁定 250:122；null = 居中自动
+  _rot: null, _rotImg: null, _rotDeg: -1,   // 旋转结果缓存
+  _quiet: false,
+  hexStr: null,       // 最近一次结果
+  bin: null,
+  crc: 0,
+};
+
+const $ = id => document.getElementById(id);
+const epCanvas = $('epCanvas'), epCtx = epCanvas.getContext('2d');
+const small = document.createElement('canvas');   // 250×122 中间画布
+small.width = CFG.DISPLAY_W; small.height = CFG.DISPLAY_H;
+const smallCtx = small.getContext('2d');
+
+/* =====================================================================
+ * 报头装饰：一条 Floyd–Steinberg 抖动的渐变纸带
+ * =================================================================== */
+function drawDitherStrip(){
+  const c = $('ditherStrip');
+  c.width = Math.max(2, c.parentElement ? c.offsetWidth || 800 : 800);
+  c.height = 14;
+  const ctx = c.getContext('2d');
+  const w = c.width, h = c.height;
+  const gs = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const t = x / (w - 1);
+      gs[y * w + x] = 40 + t * 200;   // 墨 → 纸
+    }
+  const bits = floydSteinberg(gs, w, h);
+  const id = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const v = bits[i] ? 244 : 25;
+    id.data[i*4] = v; id.data[i*4+1] = v; id.data[i*4+2] = v; id.data[i*4+3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+/* =====================================================================
+ * 图片载入
+ * =================================================================== */
+function loadFile(file){
+  if (!file) return;
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { return showError('仅支持 JPG / PNG / WebP'); }
+  if (file.size > CFG.MAX_MB * 1024 * 1024) { return showError('图片超过 10 MB 限制'); }
+  hideError();
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => { URL.revokeObjectURL(url); setImage(img, file.name, file.size); };
+  img.onerror = () => { URL.revokeObjectURL(url); showError('图片解析失败，请换一张试试'); };
+  img.src = url;
+}
+
+function setImage(img, name, size){
+  S.img = img; S.fileName = name || 'image';
+  S.crop = null; S._rotImg = null;      // 新图：选区与旋转缓存重置
+  $('dropzone').style.display = 'none';
+  $('filebar').classList.add('show');
+  $('fName').textContent = S.fileName;
+  $('fMeta').textContent = size != null ? fmtSize(size) : `${img.naturalWidth} × ${img.naturalHeight}`;
+  $('origEmpty').style.display = 'none';
+  $('origCanvas').style.display = 'block';
+  $('cropTools').classList.add('show');
+  drawEditor();
+  process();
+}
+
+/* =====================================================================
+ * 裁剪编辑器（原图面板）
+ *   选区宽高比锁定 250:122，图片坐标存储，显示时按缩放换算
+ * =================================================================== */
+const ED = { s: 1, ox: 0, oy: 0 };     // 图片坐标 → 显示坐标 的换算
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+/* 旋转结果缓存：编辑器与流水线共用同一张旋转画布 */
+function rotatedCanvas(){
+  if (S._rotImg === S.img && S._rotDeg === S.rotate) return S._rot;
+  const r = ((S.rotate % 360) + 360) % 360;
+  const swap = r === 90 || r === 270;
+  const sw = S.img.naturalWidth, sh = S.img.naturalHeight;
+  const rc = document.createElement('canvas');
+  rc.width = swap ? sh : sw; rc.height = swap ? sw : sh;
+  const rcx = rc.getContext('2d');
+  rcx.translate(rc.width / 2, rc.height / 2);
+  rcx.rotate(r * Math.PI / 180);
+  rcx.drawImage(S.img, -sw / 2, -sh / 2);
+  S._rot = rc; S._rotImg = S.img; S._rotDeg = S.rotate;
+  return rc;
+}
+
+/* 取选区；无则初始化为居中最大选区 */
+function ensureCrop(rc){
+  if (S.crop) return S.crop;
+  const ratio = CFG.DISPLAY_W / CFG.DISPLAY_H;
+  let cw, ch;
+  if (rc.width / rc.height > ratio) { ch = rc.height; cw = ch * ratio; }
+  else { cw = rc.width; ch = cw / ratio; }
+  S.crop = { x: (rc.width - cw) / 2, y: (rc.height - ch) / 2, w: cw, h: ch };
+  return S.crop;
+}
+
+function drawEditor(){
+  if (!S.img) return;
+  const c = $('origCanvas'), ctx = c.getContext('2d');
+  const rc = rotatedCanvas();
+  const cw = c.clientWidth || 460;
+  c.width = cw;
+  c.height = clamp(Math.round(cw * rc.height / rc.width), 80, 520);
+  const s = Math.min(c.width / rc.width, c.height / rc.height);
+  const dw = rc.width * s, dh = rc.height * s;
+  const ox = (c.width - dw) / 2, oy = (c.height - dh) / 2;
+  ED.s = s; ED.ox = ox; ED.oy = oy;
+
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(rc, ox, oy, dw, dh);
+
+  // 选区：选区外压暗，选区白描边 + 墨色内描边，对角两个缩放手柄
+  const cr = ensureCrop(rc);
+  const dx = ox + cr.x * s, dy = oy + cr.y * s, dwid = cr.w * s, dhgt = cr.h * s;
+  ctx.fillStyle = 'rgba(25,25,25,.42)';
+  ctx.fillRect(0, 0, c.width, dy);
+  ctx.fillRect(0, dy + dhgt, c.width, c.height - dy - dhgt);
+  ctx.fillRect(0, dy, dx, dhgt);
+  ctx.fillRect(dx + dwid, dy, c.width - dx - dwid, dhgt);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+  ctx.strokeRect(dx + 1, dy + 1, dwid - 2, dhgt - 2);
+  ctx.strokeStyle = '#191919'; ctx.lineWidth = 1;
+  ctx.strokeRect(dx + .5, dy + .5, dwid - 1, dhgt - 1);
+  drawHandle(ctx, dx, dy);
+  drawHandle(ctx, dx + dwid, dy + dhgt);
+
+  $('origMeta').textContent =
+    `${S.img.naturalWidth} × ${S.img.naturalHeight} · 选区 ${Math.round(cr.w)} × ${Math.round(cr.h)}`;
+}
+
+function drawHandle(ctx, x, y){
+  ctx.fillStyle = '#fbf9f4';
+  ctx.fillRect(x - 6, y - 6, 12, 12);
+  ctx.strokeStyle = '#191919'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - 6, y - 6, 12, 12);
+}
+
+/* =====================================================================
+ * 处理流水线
+ *   旋转 → 裁剪（用户选区 / 居中，250:122）→ 逐级缩到 250×122 → 灰度
+ *   → 抖动/阈值 → 1-bit → 补齐 256×122 framebuffer
+ * =================================================================== */
+function process(quiet){
+  if (!S.img) { drawPlaceholder(); return; }
+  const crop = cropAndScale();
+  const gs = grayscale(crop);
+  if (S.invert) for (let i = 0; i < gs.length; i++) gs[i] = 255 - gs[i];
+  const bits = (S.mode === 'dither')
+    ? floydSteinberg(gs, CFG.DISPLAY_W, CFG.DISPLAY_H)
+    : thresholdBits(gs, S.threshold);
+  const fb = packBits(bits);                    // 3904 B
+  buildOutputs(fb);
+  renderScreen(bits, quiet);
+}
+
+/* 裁剪 + 缩放到 250×122，返回该 canvas */
+function cropAndScale(){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const rc = rotatedCanvas();
+  // 选区：用户手动（宽高比已锁定），否则取居中最大选区
+  let cx, cy, cw, ch;
+  if (S.crop) {
+    ({ x: cx, y: cy, w: cw, h: ch } = S.crop);
+  } else {
+    const ratio = W / H;
+    if (rc.width / rc.height > ratio) { ch = rc.height; cw = ch * ratio; }
+    else { cw = rc.width; ch = cw / ratio; }
+    cx = (rc.width - cw) / 2; cy = (rc.height - ch) / 2;
+  }
+
+  // 逐级减半再精缩，大图缩小时保留层次
+  let step = document.createElement('canvas');
+  step.width = Math.max(1, Math.round(cw)); step.height = Math.max(1, Math.round(ch));
+  step.getContext('2d').drawImage(rc, cx, cy, cw, ch, 0, 0, step.width, step.height);
+  while (step.width >= W * 2 && step.height >= H * 2) {
+    const half = document.createElement('canvas');
+    half.width = Math.max(W, step.width >> 1);
+    half.height = Math.max(H, step.height >> 1);
+    const hx = half.getContext('2d');
+    hx.imageSmoothingEnabled = true; hx.imageSmoothingQuality = 'high';
+    hx.drawImage(step, 0, 0, half.width, half.height);
+    step = half;
+  }
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ox = out.getContext('2d');
+  ox.fillStyle = '#fff'; ox.fillRect(0, 0, W, H);   // 透明区落白
+  ox.imageSmoothingEnabled = true; ox.imageSmoothingQuality = 'high';
+  ox.drawImage(step, 0, 0, W, H);
+  return out;
+}
+
+/* 取灰度（含 alpha 已在白底上合成） */
+function grayscale(cv){
+  const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  const n = cv.width * cv.height;
+  const gs = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = d[i*4], g = d[i*4+1], b = d[i*4+2];
+    gs[i] = 0.299 * r + 0.587 * g + 0.114 * b;   // ITU-R BT.601
+  }
+  return gs;
+}
+
+/* Floyd–Steinberg 误差扩散，返回 0/255 数组 */
+function floydSteinberg(gs, w, h){
+  const a = Float32Array.from(gs);
+  const bits = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const old = a[i];
+      const nw = old < 128 ? 0 : 255;
+      bits[i] = nw;
+      const err = old - nw;
+      if (x + 1 < w)               a[i + 1]       += err * 7 / 16;
+      if (y + 1 < h) {
+        if (x > 0)                 a[i + w - 1]   += err * 3 / 16;
+                                     a[i + w]     += err * 5 / 16;
+        if (x + 1 < w)             a[i + w + 1]   += err * 1 / 16;
+      }
+    }
+  }
+  return bits;
+}
+
+function thresholdBits(gs, t){
+  const bits = new Uint8Array(gs.length);
+  for (let i = 0; i < gs.length; i++) bits[i] = gs[i] >= t ? 255 : 0;
+  return bits;
+}
+
+/* 250×122 的 0/255 位图 → 256×122 framebuffer（右侧补 6 列白） */
+function packBits(bits){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const rowBytes = CFG.FB_W / 8;                       // 32
+  const fb = new Uint8Array(rowBytes * H);             // 3904
+  const white = CFG.ONE_IS_WHITE ? 1 : 0;
+  for (let y = 0; y < H; y++) {
+    const row = y * rowBytes;
+    for (let b = 0; b < rowBytes; b++) fb[row + b] = white ? 0xFF : 0x00;  // 填充位=白
+    for (let x = 0; x < W; x++) {
+      const isWhite = bits[y * W + x] === 255;
+      let v = isWhite ? 1 : 0;
+      if (!CFG.ONE_IS_WHITE) v = 1 - v;
+      if (v) {
+        const bit = CFG.MSB_FIRST ? 7 - (x & 7) : (x & 7);
+        fb[row + (x >> 3)] |= (1 << bit);
+      } else {
+        const bit = CFG.MSB_FIRST ? 7 - (x & 7) : (x & 7);
+        fb[row + (x >> 3)] &= ~(1 << bit);
+      }
+    }
+  }
+  return fb;
+}
+
+/* =====================================================================
+ * 输出
+ * =================================================================== */
+function buildOutputs(fb){
+  // Hex 文本（NFC Tools Text Record）
+  const hex = bytesToHex(fb);
+  S.hexStr = `XEPR1|${CFG.FB_W}|${CFG.FB_H}|${hex}`;
+
+  // .bin：协议帧（含 CRC32，大端）
+  const bin = new Uint8Array(12 + 3904 + 4);
+  bin.set([0x58, 0x45, 0x50, 0x52], 0);        // "XEPR"
+  bin[4] = 1;                                   // Version
+  bin[5] = CFG.FB_W >> 8;  bin[6] = CFG.FB_W & 0xFF;
+  bin[7] = CFG.FB_H >> 8;  bin[8] = CFG.FB_H & 0xFF;
+  bin[9] = 1;                                   // Format: BW1
+  bin[10] = 3904 >> 8; bin[11] = 3904 & 0xFF;
+  bin.set(fb, 12);
+  const crc = crc32(bin.subarray(0, bin.length - 4));
+  bin[3916] = crc >>> 24; bin[3917] = (crc >>> 16) & 0xFF;
+  bin[3918] = (crc >>> 8) & 0xFF; bin[3919] = crc & 0xFF;
+  S.bin = bin; S.crc = crc;
+
+  // 界面
+  $('outEmpty').style.display = 'none';
+  $('outBody').style.display = '';
+  $('statHex').textContent = hex.length.toLocaleString() + ' 字符';
+  $('statCrc').textContent = crc.toString(16).toUpperCase().padStart(8, '0');
+  $('hexCount').textContent = `共 ${hex.length.toLocaleString()} 字符，已截断显示`;
+  $('hexbox').textContent = S.hexStr.slice(0, 900);
+}
+
+function bytesToHex(bytes){
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
+  return s.toUpperCase();
+}
+
+function crc32(bytes){
+  let t = crc32.t;
+  if (!t) {
+    t = crc32.t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c;
+    }
+  }
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/* =====================================================================
+ * 屏幕预览（像素级精确）
+ * =================================================================== */
+function renderScreen(bits, quiet){
+  const id = smallCtx.createImageData(CFG.DISPLAY_W, CFG.DISPLAY_H);
+  for (let i = 0; i < bits.length; i++) {
+    const v = bits[i] ? 255 : 0;
+    id.data[i*4] = v; id.data[i*4+1] = v; id.data[i*4+2] = v; id.data[i*4+3] = 255;
+  }
+  smallCtx.putImageData(id, 0, 0);
+  epCtx.imageSmoothingEnabled = false;
+  epCtx.fillStyle = '#fff'; epCtx.fillRect(0, 0, epCanvas.width, epCanvas.height);
+  epCtx.drawImage(small, 0, 0, epCanvas.width, epCanvas.height);
+  if (!quiet) flashScreen();      // 拖动过程中不闪屏，松手时刷一次
+}
+
+/* 待机画面 */
+function drawPlaceholder(){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const id = smallCtx.createImageData(W, H);
+  const gs = new Float32Array(W * H);
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) gs[y * W + x] = 235 - (y / H) * 60;
+  const bits = floydSteinberg(gs, W, H);
+  // 中央开一块干净纸面写待机文字
+  const bx0 = 45, bx1 = W - 45, by0 = 34, by1 = H - 34;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const inBox = x >= bx0 && x < bx1 && y >= by0 && y < by1;
+      const edge = inBox && (x === bx0 || x === bx1 - 1 || y === by0 || y === by1 - 1);
+      bits[i] = edge ? 0 : (inBox ? 255 : bits[i]);
+    }
+  // 文字直接画在小画布上再二值化，保持像素感
+  smallCtx.putImageData(imageDataOf(bits), 0, 0);
+  smallCtx.fillStyle = '#fff'; smallCtx.fillRect(bx0 + 1, by0 + 1, bx1 - bx0 - 2, by1 - by0 - 2);
+  smallCtx.fillStyle = '#000';
+  smallCtx.textAlign = 'center'; smallCtx.textBaseline = 'middle';
+  smallCtx.font = '13px monospace';
+  smallCtx.fillText('NFC × EPAPER', W / 2, H / 2 - 9);
+  smallCtx.fillText('等待上传图片…', W / 2, H / 2 + 10);
+  // 重新二值化整块，去掉抗锯齿灰点
+  const d2 = smallCtx.getImageData(0, 0, W, H).data;
+  const bits2 = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const g = 0.299 * d2[i*4] + 0.587 * d2[i*4+1] + 0.114 * d2[i*4+2];
+    bits2[i] = g > 140 ? 255 : 0;
+  }
+  smallCtx.putImageData(imageDataOf(bits2), 0, 0);
+  epCtx.imageSmoothingEnabled = false;
+  epCtx.drawImage(small, 0, 0, epCanvas.width, epCanvas.height);
+
+  function imageDataOf(b){
+    const im = new ImageData(W, H);
+    for (let i = 0; i < b.length; i++) {
+      const v = b[i] ? 255 : 0;
+      im.data[i*4] = v; im.data[i*4+1] = v; im.data[i*4+2] = v; im.data[i*4+3] = 255;
+    }
+    return im;
+  }
+}
+
+/* 墨水屏全刷闪屏 */
+let flashTimer = null;
+function flashScreen(){
+  const sc = $('screen');
+  sc.classList.remove('refresh');
+  void sc.offsetWidth;                // 重启动画
+  sc.classList.add('refresh');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => sc.classList.remove('refresh'), 400);
+}
+
+/* =====================================================================
+ * 交互
+ * =================================================================== */
+$('dropzone').addEventListener('click', e => {
+  if (e.target.id === 'testLink') return;
+  $('fileInput').click();
+});
+$('dropzone').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('fileInput').click(); }
+});
+$('rebtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', e => { loadFile(e.target.files[0]); e.target.value = ''; });
+
+;['dragenter', 'dragover'].forEach(ev =>
+  $('dropzone').addEventListener(ev, e => { e.preventDefault(); $('dropzone').classList.add('drag'); }));
+;['dragleave', 'drop'].forEach(ev =>
+  $('dropzone').addEventListener(ev, e => { e.preventDefault(); $('dropzone').classList.remove('drag'); }));
+$('dropzone').addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+
+/* 粘贴 */
+document.addEventListener('paste', e => {
+  const f = [...(e.clipboardData?.files || [])][0];
+  if (f) loadFile(f);
+});
+
+/* =====================================================================
+ * 裁剪交互：拖动移动 · 左上/右下角点等比缩放 · 点击选区外跳转
+ *   拖动过程走 rAF 合帧、墨水屏预览静默刷新，松手时闪屏一次
+ * =================================================================== */
+const oc = $('origCanvas');
+let drag = null;
+let rafId = null;
+
+function scheduleProcess(quiet){
+  S._quiet = quiet;
+  if (rafId != null) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = null;
+    const q = S._quiet;
+    S._quiet = false;
+    process(q);
+  });
+}
+
+function evtPos(e){
+  const r = oc.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (oc.width / r.width),
+    y: (e.clientY - r.top) * (oc.height / r.height),
+  };
+}
+
+oc.addEventListener('pointerdown', e => {
+  if (!S.img) return;
+  e.preventDefault();
+  const rc = rotatedCanvas(), cr = ensureCrop(rc);
+  const p = evtPos(e), { s, ox, oy } = ED;
+  const dx = ox + cr.x * s, dy = oy + cr.y * s;
+  const dwid = cr.w * s, dhgt = cr.h * s;
+  const R = 18;    // 手柄命中半径（显示像素）
+  const onBR = Math.hypot(p.x - (dx + dwid), p.y - (dy + dhgt)) < R;
+  const onTL = Math.hypot(p.x - dx, p.y - dy) < R;
+  if (onBR || onTL) {
+    drag = { mode: onBR ? 'br' : 'tl', crop0: { ...cr } };
+    oc.style.cursor = 'nwse-resize';
+  } else {
+    const inside = p.x >= dx && p.x <= dx + dwid && p.y >= dy && p.y <= dy + dhgt;
+    if (!inside) {          // 点击选区外：选区中心跳到点击处，随后仍可继续拖
+      cr.x = clamp((p.x - ox) / s - cr.w / 2, 0, rc.width - cr.w);
+      cr.y = clamp((p.y - oy) / s - cr.h / 2, 0, rc.height - cr.h);
+    }
+    drag = { mode: 'move', p0: p, crop0: { ...cr } };
+    oc.style.cursor = 'grabbing';
+  }
+  oc.setPointerCapture(e.pointerId);
+  drawEditor();
+  scheduleProcess(true);
+});
+
+oc.addEventListener('pointermove', e => {
+  if (!drag || !S.img) return;
+  const rc = rotatedCanvas(), cr = ensureCrop(rc);
+  const p = evtPos(e), { s, ox, oy } = ED;
+  const ratio = CFG.DISPLAY_W / CFG.DISPLAY_H;
+  const minW = Math.max(8, 24 / s);          // 选区最小宽度（图片像素）
+  if (drag.mode === 'move') {
+    cr.x = clamp(drag.crop0.x + (p.x - drag.p0.x) / s, 0, rc.width - cr.w);
+    cr.y = clamp(drag.crop0.y + (p.y - drag.p0.y) / s, 0, rc.height - cr.h);
+  } else if (drag.mode === 'br') {           // 左上角固定，拉右下角
+    const x0 = drag.crop0.x, y0 = drag.crop0.y;
+    const maxW = Math.min(rc.width - x0, (rc.height - y0) * ratio);
+    cr.w = clamp((p.x - ox) / s - x0, minW, maxW);
+    cr.h = cr.w / ratio;
+    cr.x = x0; cr.y = y0;
+  } else {                                   // 右下角固定，拉左上角
+    const x1 = drag.crop0.x + drag.crop0.w;
+    const yBot = drag.crop0.y + drag.crop0.h;
+    const maxW = Math.min(x1, yBot * ratio);
+    cr.w = clamp(x1 - (p.x - ox) / s, minW, maxW);
+    cr.h = cr.w / ratio;
+    cr.x = x1 - cr.w; cr.y = yBot - cr.h;
+  }
+  drawEditor();
+  scheduleProcess(true);
+});
+
+function endDrag(){
+  if (!drag) return;
+  drag = null;
+  oc.style.cursor = 'move';
+  process(false);      // 松手：墨水屏闪一次，确认最终效果
+}
+oc.addEventListener('pointerup', endDrag);
+oc.addEventListener('pointercancel', endDrag);
+
+/* 重置裁剪 */
+$('cropReset').addEventListener('click', () => {
+  if (!S.img) return;
+  S.crop = null;
+  drawEditor();
+  process();
+});
+
+/* 测试图 */
+$('testLink').addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const c = document.createElement('canvas');
+  c.width = 800; c.height = 390;
+  const x = c.getContext('2d');
+  const grad = x.createLinearGradient(0, 0, c.width, 0);
+  grad.addColorStop(0, '#000'); grad.addColorStop(.5, '#888'); grad.addColorStop(1, '#fff');
+  x.fillStyle = grad; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#fff'; x.beginPath(); x.arc(180, 195, 90, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#000'; x.beginPath(); x.arc(190, 185, 70, 0, Math.PI * 2); x.fill();
+  x.strokeStyle = '#fff'; x.lineWidth = 3;
+  for (let i = 0; i < 12; i++) {
+    x.beginPath(); x.moveTo(320 + i * 34, 60); x.lineTo(350 + i * 34, 330); x.stroke();
+  }
+  x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, 60);
+  x.fillStyle = '#000'; x.font = 'bold 40px Georgia, serif';
+  x.textAlign = 'center'; x.fillText('XIAO 2.13" E-PAPER', c.width / 2, 45);
+  const img = new Image();
+  img.onload = () => setImage(img, 'test-image.png', null);
+  img.src = c.toDataURL('image/png');
+});
+
+/* 模式切换 */
+$('modeDither').addEventListener('click', () => setMode('dither'));
+$('modeThresh').addEventListener('click', () => setMode('threshold'));
+function setMode(m){
+  S.mode = m;
+  $('modeDither').classList.toggle('on', m === 'dither');
+  $('modeThresh').classList.toggle('on', m === 'threshold');
+  $('threshRow').classList.toggle('off', m !== 'threshold');
+  process();
+}
+
+/* 阈值 */
+$('thresh').addEventListener('input', e => {
+  S.threshold = +e.target.value;
+  $('threshVal').textContent = S.threshold;
+  process();
+});
+
+/* 反色 / 旋转 */
+$('invBtn').addEventListener('click', () => {
+  S.invert = !S.invert;
+  $('invBtn').classList.toggle('on', S.invert);
+  $('invBtn').setAttribute('aria-pressed', S.invert);
+  process();
+});
+$('rotBtn').addEventListener('click', () => {
+  S.rotate = (S.rotate + 90) % 360;
+  $('rotDeg').textContent = S.rotate + '°';
+  S.crop = null;                 // 旋转后坐标系变化，选区重置为居中
+  drawEditor();
+  process();
+});
+
+/* 复制 */
+$('copyBtn').addEventListener('click', async () => {
+  if (!S.hexStr) return;
+  const btn = $('copyBtn');
+  let ok = false;
+  try { await navigator.clipboard.writeText(S.hexStr); ok = true; }
+  catch { ok = fallbackCopy(S.hexStr); }
+  if (ok) {
+    const old = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => { btn.textContent = old; }, 1600);
+  } else {
+    showError('复制失败，请手动选择复制');
+  }
+});
+
+/* =====================================================================
+ * Web NFC：Android Chrome 直接把二进制 XEPR 帧写入 XIAO
+ *   MIME 记录 application/x-xiao-epaper，payload 即 3920 B 协议帧
+ * =================================================================== */
+if ('NDEFReader' in window) {
+  $('nfcBtn').style.display = '';
+  if (!window.isSecureContext) {
+    $('nfcStatus').textContent =
+      '提示：当前页面非 HTTPS/localhost，写入可能被浏览器拒绝';
+  }
+}
+
+$('nfcBtn').addEventListener('click', async () => {
+  if (!S.bin) return;
+  const btn = $('nfcBtn'), st = $('nfcStatus');
+  btn.disabled = true;
+  st.textContent = '请将手机贴近 XIAO，写入期间保持不动（约数秒）…';
+  try {
+    const ndef = new NDEFReader();
+    await ndef.write({
+      records: [{
+        recordType: 'mime',
+        mediaType: 'application/x-xiao-epaper',
+        data: S.bin,             // 3920 B XEPR 帧（含 CRC32）
+      }],
+    });
+    st.textContent = '✓ 已写入，墨水屏应已刷新显示图片';
+    setTimeout(() => { if (st.textContent.startsWith('✓')) st.textContent = ''; }, 5000);
+  } catch (e) {
+    const reason = (e && (e.message || e.name)) ? (e.message || e.name) : String(e);
+    st.textContent = '写入失败：' + reason +
+      '（需 Chrome/Android、系统 NFC 已开启、页面经 HTTPS 或 localhost 打开）';
+  }
+  btn.disabled = false;
+});
+function fallbackCopy(text){
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+/* 下载 .bin */
+$('dlBtn').addEventListener('click', () => {
+  if (!S.bin) return;
+  const blob = new Blob([S.bin], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'xiao_epaper.bin';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+});
+
+/* 错误提示 */
+function showError(msg){ const el = $('err'); el.textContent = msg; el.classList.add('show'); }
+function hideError(){ $('err').classList.remove('show'); }
+
+function fmtSize(n){
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+/* 窗口尺寸变化：重绘报头纸带与原图 */
+let rz;
+window.addEventListener('resize', () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { drawDitherStrip(); if (S.img) drawEditor(); }, 150);
+});
+
+/* 启动 */
+drawDitherStrip();
+drawPlaceholder();
+</script>
+</body>
+</html>

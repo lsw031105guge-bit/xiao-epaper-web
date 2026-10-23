@@ -290,7 +290,7 @@
   <header>
     <div class="mast-top">
       <span>XEPR · V1</span>
-      <span>256 × 122 · 1-BIT · BW</span>
+      <span id="mastSpec">256 × 122 · 1-BIT · BW</span>
     </div>
     <h1>NFC ePaper Image Converter</h1>
     <p class="tagline">图片 → 墨水屏 · 250 × 122 · XIAO</p>
@@ -346,11 +346,18 @@
           <div class="screen" id="screen"><canvas id="epCanvas" width="500" height="244"></canvas></div>
           <div class="bezel-label">XIAO · 2.13" E-PAPER</div>
         </div>
-        <div class="device-caption">250 × 122 · 黑 / 白 · 1 bit</div>
+        <div class="device-caption" id="devCap">250 × 122 · 黑 / 白 · 1 bit</div>
 
         <div class="controls">
           <div class="ctl-row">
-            <div class="ctl-label"><span>二值化模式</span></div>
+            <div class="ctl-label"><span>屏幕型号</span></div>
+            <div class="seg">
+              <button id="panelBw" class="on">2.13" 黑白</button>
+              <button id="panelC4">2.13" 四色</button>
+            </div>
+          </div>
+          <div class="ctl-row">
+            <div class="ctl-label"><span id="modeLabel">二值化模式</span></div>
             <div class="seg">
               <button id="modeDither" class="on">抖动 Floyd–Steinberg</button>
               <button id="modeThresh">阈值</button>
@@ -383,27 +390,21 @@
     </div>
 
     <div id="outEmpty">
-      <div class="hex-empty">转换后在此生成 NFC 数据<br>格式 XEPR1|256|122|&lt;HEX&gt; · 附带 .bin 二进制下载</div>
-      <div class="proto"><b>偏移  字段         长度     值</b>
- 0     Header        4 B      "XEPR"
- 4     Version       1 B      1
- 5     Width         2 B BE   256
- 7     Height        2 B BE   122
- 9     Format        1 B      1 (BW1)
-10     Length        2 B BE   3904
-12     Image Data    3904 B   1-bit bitmap
-3916   CRC32         4 B BE   IEEE 802.3</div>
+      <div class="hex-empty" id="hexEmpty">转换后在此生成 NFC 数据<br>格式 XEPR1|256|122|&lt;HEX&gt; · 附带 .bin 二进制下载</div>
+      <div class="proto" id="protoBox"></div>
     </div>
 
     <div id="outBody" style="display:none">
       <div class="stats">
-        <div class="stat"><div class="k">图像数据</div><div class="v">3,904 B</div></div>
+        <div class="stat"><div class="k">图像数据</div><div class="v" id="statImg">3,904 B</div></div>
         <div class="stat"><div class="k">Hex 文本</div><div class="v" id="statHex">—</div></div>
-        <div class="stat"><div class="k">.bin 文件</div><div class="v">3,920 B</div></div>
+        <div class="stat"><div class="k">.bin 文件</div><div class="v" id="statBin">3,920 B</div></div>
         <div class="stat"><div class="k">CRC32</div><div class="v" id="statCrc">—</div></div>
       </div>
-      <div class="hex-label"><span>NFC Payload（Text Record）</span><span id="hexCount"></span></div>
-      <div class="hexbox dim" id="hexbox"></div>
+      <div id="hexSection">
+        <div class="hex-label"><span>NFC Payload（Text Record）</span><span id="hexCount"></span></div>
+        <div class="hexbox dim" id="hexbox"></div>
+      </div>
       <div class="actions">
         <button class="btn btn-primary" id="nfcBtn" style="display:none">写入到 XIAO（Web NFC）</button>
         <button class="btn btn-primary" id="copyBtn">复制 NFC 数据</button>
@@ -416,10 +417,10 @@
   <footer>
     <div class="steps">
       <span class="step"><b>1</b> Chrome/安卓：点「写入到 XIAO」后贴近即可</span>
-      <span class="step"><b>2</b> 或：复制数据 → NFC Tools → 写入 → 添加记录 → 文本</span>
+      <span class="step" id="step2"><b>2</b> 或：复制数据 → NFC Tools → 写入 → 添加记录 → 文本</span>
       <span class="step"><b>3</b> 贴近 XIAO 写入，屏幕即显示</span>
     </div>
-    <div style="margin-top:8px">位序 MSB-first · 1=白 0=黑 · framebuffer 每行 32 B 对齐（与 Seeed 256×122 驱动一致）</div>
+    <div style="margin-top:8px" id="footNote">位序 MSB-first · 1=白 0=黑 · framebuffer 每行 32 B 对齐（与 Seeed 256×122 驱动一致）</div>
   </footer>
 
 </div>
@@ -440,6 +441,28 @@ const CFG = {
   MAX_MB    : 10,
 };
 
+/* 协议帧字段表（输出区展示，随屏幕型号切换） */
+const PROTO_BW =
+`<b>偏移  字段         长度     值</b>
+ 0     Header        4 B      "XEPR"
+ 4     Version       1 B      1
+ 5     Width         2 B BE   256
+ 7     Height        2 B BE   122
+ 9     Format        1 B      1 (BW1)
+10     Length        2 B BE   3904
+12     Image Data    3904 B   1-bit bitmap
+3916   CRC32         4 B BE   IEEE 802.3`;
+const PROTO_C4 =
+`<b>偏移  字段         长度     值</b>
+ 0     Header        4 B      "XEPR"
+ 4     Version       1 B      1
+ 5     Width         2 B BE   128
+ 7     Height        2 B BE   250
+ 9     Format        1 B      2 (4C2)
+10     Length        2 B BE   8000
+12     Image Data    8000 B   2bpp 面板 RAM 镜像
+8012   CRC32         4 B BE   IEEE 802.3`;
+
 /* -------------------- 全局状态 -------------------- */
 const S = {
   img: null,          // HTMLImageElement
@@ -451,6 +474,7 @@ const S = {
   crop: null,         // {x,y,w,h} 图片坐标，宽高比锁定 250:122；null = 居中自动
   _rot: null, _rotImg: null, _rotDeg: -1,   // 旋转结果缓存
   _quiet: false,
+  panel: 'bw',        // 'bw' | 'c4'（2.13" 四色 GDEY0213F51）
   hexStr: null,       // 最近一次结果
   bin: null,
   crc: 0,
@@ -599,6 +623,14 @@ function drawHandle(ctx, x, y){
 function process(quiet){
   if (!S.img) { drawPlaceholder(); return; }
   const crop = cropAndScale();
+  if (S.panel === 'c4') {
+    /* 四色：量化到 黑/白/黄/红 → 2bpp 面板 RAM 镜像 → XEPR2 帧 */
+    const codes = quantize4c(crop, S.mode === 'dither');
+    const ram = pack2bpp(codes);                   // 8000 B
+    buildOutputs4c(ram);
+    renderScreen4c(codes, quiet);
+    return;
+  }
   const gs = grayscale(crop);
   if (S.invert) for (let i = 0; i < gs.length; i++) gs[i] = 255 - gs[i];
   const bits = (S.mode === 'dither')
@@ -712,6 +744,84 @@ function packBits(bits){
 }
 
 /* =====================================================================
+ * 四色（Seeed 2.13" Quadruple Color / GDEY0213F51 / JD79661）
+ *   色码与固件端 RAM 一致：0x00 黑 · 0x01 白 · 0x02 黄 · 0x03 红
+ * =================================================================== */
+const PAL4 = [
+  { r:   0, g:   0, b:   0 },   /* 黑 0x00 */
+  { r: 255, g: 255, b: 255 },   /* 白 0x01 */
+  { r: 255, g: 216, b:   0 },   /* 黄 0x02 */
+  { r: 230, g:  32, b:  32 },   /* 红 0x03 */
+];
+
+/* 最近色（redmean 加权距离，比朴素欧氏距离更接近人眼） */
+function nearest4(r, g, b){
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const p = PAL4[i], rm = (r + p.r) / 2;
+    const dr = r - p.r, dg = g - p.g, db = b - p.b;
+    const d = (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/* RGB Floyd–Steinberg 误差扩散到四色 palette */
+function ditherTo4c(rs, gs, bs, w, h){
+  const codes = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const idx = nearest4(rs[i], gs[i], bs[i]);
+      codes[i] = idx;
+      const p = PAL4[idx];
+      const er = rs[i] - p.r, eg = gs[i] - p.g, eb = bs[i] - p.b;
+      if (x + 1 < w) {
+        rs[i + 1]     += er * 7 / 16; gs[i + 1]     += eg * 7 / 16; bs[i + 1]     += eb * 7 / 16;
+      }
+      if (y + 1 < h) {
+        if (x > 0)     { rs[i + w - 1] += er * 3 / 16; gs[i + w - 1] += eg * 3 / 16; bs[i + w - 1] += eb * 3 / 16; }
+                        rs[i + w]     += er * 5 / 16; gs[i + w]     += eg * 5 / 16; bs[i + w]     += eb * 5 / 16;
+        if (x + 1 < w) { rs[i + w + 1] += er * 1 / 16; gs[i + w + 1] += eg * 1 / 16; bs[i + w + 1] += eb * 1 / 16; }
+      }
+    }
+  }
+  return codes;
+}
+
+/* 画布 → 四色码（0..3），dither=true 走误差扩散 */
+function quantize4c(cv, dither){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const d = cv.getContext('2d').getImageData(0, 0, W, H).data;
+  const n = W * H;
+  const rs = new Float32Array(n), gs = new Float32Array(n), bs = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    rs[i] = d[i*4]; gs[i] = d[i*4+1]; bs[i] = d[i*4+2];
+  }
+  if (!dither) {
+    const codes = new Uint8Array(n);
+    for (let i = 0; i < n; i++) codes[i] = nearest4(rs[i], gs[i], bs[i]);
+    return codes;
+  }
+  return ditherTo4c(rs, gs, bs, W, H);
+}
+
+/* 250×122 四色码 → 面板 RAM 镜像（128 source × 250 gate，每 gate 32 B，2bpp：
+ * 屏幕像素 (x,y) → 字节 x*32 + y/4，位 6-2*(y%4)，与固件 jd79661 驱动一致） */
+function pack2bpp(codes){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const ram = new Uint8Array(8000);
+  for (let y = 0; y < H; y++) {
+    const shift = 6 - 2 * (y & 3);
+    for (let x = 0; x < W; x++) {
+      const idx = x * 32 + (y >> 2);
+      ram[idx] = (ram[idx] & ~(3 << shift)) | (codes[y * W + x] << shift);
+    }
+  }
+  return ram;
+}
+
+/* =====================================================================
  * 输出
  * =================================================================== */
 function buildOutputs(fb){
@@ -736,10 +846,42 @@ function buildOutputs(fb){
   // 界面
   $('outEmpty').style.display = 'none';
   $('outBody').style.display = '';
+  $('statImg').textContent = '3,904 B';
+  $('statBin').textContent = '3,920 B';
+  $('hexSection').style.display = '';
+  $('copyBtn').style.display = '';
   $('statHex').textContent = hex.length.toLocaleString() + ' 字符';
   $('statCrc').textContent = crc.toString(16).toUpperCase().padStart(8, '0');
   $('hexCount').textContent = `共 ${hex.length.toLocaleString()} 字符，已截断显示`;
   $('hexbox').textContent = S.hexStr.slice(0, 900);
+}
+
+/* 四色输出：XEPR2 二进制帧（w=128 h=250 fmt=2 len=8000 + CRC32）。
+ * 8000 B 图像的 Hex 文本（16000+ 字符）远超 NFC 8 KB 预算，只走
+ * Web NFC / .bin 二进制通道。 */
+function buildOutputs4c(ram){
+  const bin = new Uint8Array(12 + 8000 + 4);
+  bin.set([0x58, 0x45, 0x50, 0x52], 0);        // "XEPR"
+  bin[4] = 1;                                   // Version
+  bin[5] = 0;  bin[6] = 128;                    // Width  = 128（source 数）
+  bin[7] = 0;  bin[8] = 250;                    // Height = 250（gate 数）
+  bin[9] = 2;                                   // Format: 4C2
+  bin[10] = 8000 >> 8; bin[11] = 8000 & 0xFF;
+  bin.set(ram, 12);
+  const crc = crc32(bin.subarray(0, bin.length - 4));
+  bin[8012] = crc >>> 24; bin[8013] = (crc >>> 16) & 0xFF;
+  bin[8014] = (crc >>> 8) & 0xFF; bin[8015] = crc & 0xFF;
+  S.bin = bin; S.crc = crc; S.hexStr = null;
+
+  // 界面（无 Hex 文本通道）
+  $('outEmpty').style.display = 'none';
+  $('outBody').style.display = '';
+  $('statImg').textContent = '8,000 B';
+  $('statBin').textContent = '8,016 B';
+  $('statHex').textContent = '不适用';
+  $('hexSection').style.display = 'none';
+  $('copyBtn').style.display = 'none';
+  $('statCrc').textContent = crc.toString(16).toUpperCase().padStart(8, '0');
 }
 
 function bytesToHex(bytes){
@@ -779,8 +921,23 @@ function renderScreen(bits, quiet){
   if (!quiet) flashScreen();      // 拖动过程中不闪屏，松手时刷一次
 }
 
+/* 四色屏幕预览（像素级精确，使用面板色近似值） */
+function renderScreen4c(codes, quiet){
+  const id = smallCtx.createImageData(CFG.DISPLAY_W, CFG.DISPLAY_H);
+  for (let i = 0; i < codes.length; i++) {
+    const p = PAL4[codes[i]];
+    id.data[i*4] = p.r; id.data[i*4+1] = p.g; id.data[i*4+2] = p.b; id.data[i*4+3] = 255;
+  }
+  smallCtx.putImageData(id, 0, 0);
+  epCtx.imageSmoothingEnabled = false;
+  epCtx.fillStyle = '#fff'; epCtx.fillRect(0, 0, epCanvas.width, epCanvas.height);
+  epCtx.drawImage(small, 0, 0, epCanvas.width, epCanvas.height);
+  if (!quiet) flashScreen();
+}
+
 /* 待机画面 */
 function drawPlaceholder(){
+  if (S.panel === 'c4') { drawPlaceholder4c(); return; }
   const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
   const id = smallCtx.createImageData(W, H);
   const gs = new Float32Array(W * H);
@@ -820,6 +977,55 @@ function drawPlaceholder(){
     for (let i = 0; i < b.length; i++) {
       const v = b[i] ? 255 : 0;
       im.data[i*4] = v; im.data[i*4+1] = v; im.data[i*4+2] = v; im.data[i*4+3] = 255;
+    }
+    return im;
+  }
+}
+
+/* 四色待机画面：黑→红→黄→白 渐变（误差扩散后可见全部四色）+ 中央纸面 */
+function drawPlaceholder4c(){
+  const W = CFG.DISPLAY_W, H = CFG.DISPLAY_H;
+  const n = W * H;
+  const rs = new Float32Array(n), gs = new Float32Array(n), bs = new Float32Array(n);
+  const stops = [[0,0,0],[230,32,32],[255,216,0],[255,255,255]];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const t = Math.min(3, (x / (W - 1)) * 3);
+      const s0 = Math.min(2, Math.floor(t));
+      const a = stops[s0], b = stops[s0 + 1], f = t - s0;
+      const i = y * W + x;
+      rs[i] = a[0] + (b[0] - a[0]) * f;
+      gs[i] = a[1] + (b[1] - a[1]) * f;
+      bs[i] = a[2] + (b[2] - a[2]) * f;
+    }
+  const codes = ditherTo4c(rs, gs, bs, W, H);
+  // 中央开一块干净纸面写待机文字
+  const bx0 = 45, bx1 = W - 45, by0 = 34, by1 = H - 34;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const inBox = x >= bx0 && x < bx1 && y >= by0 && y < by1;
+      const edge = inBox && (x === bx0 || x === bx1 - 1 || y === by0 || y === by1 - 1);
+      codes[i] = edge ? 0 : (inBox ? 1 : codes[i]);
+    }
+  // 文字直接画在小画布上再重新量化，去掉抗锯齿杂色
+  smallCtx.putImageData(imageDataOf4(codes), 0, 0);
+  smallCtx.fillStyle = '#fff'; smallCtx.fillRect(bx0 + 1, by0 + 1, bx1 - bx0 - 2, by1 - by0 - 2);
+  smallCtx.fillStyle = '#000';
+  smallCtx.textAlign = 'center'; smallCtx.textBaseline = 'middle';
+  smallCtx.font = '13px monospace';
+  smallCtx.fillText('NFC × EPAPER', W / 2, H / 2 - 9);
+  smallCtx.fillText('等待上传图片…', W / 2, H / 2 + 10);
+  const d2 = smallCtx.getImageData(0, 0, W, H).data;
+  const codes2 = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) codes2[i] = nearest4(d2[i*4], d2[i*4+1], d2[i*4+2]);
+  renderScreen4c(codes2, false);
+
+  function imageDataOf4(c){
+    const im = new ImageData(W, H);
+    for (let i = 0; i < c.length; i++) {
+      const p = PAL4[c[i]];
+      im.data[i*4] = p.r; im.data[i*4+1] = p.g; im.data[i*4+2] = p.b; im.data[i*4+3] = 255;
     }
     return im;
   }
@@ -966,7 +1172,13 @@ $('testLink').addEventListener('click', e => {
   c.width = 800; c.height = 390;
   const x = c.getContext('2d');
   const grad = x.createLinearGradient(0, 0, c.width, 0);
-  grad.addColorStop(0, '#000'); grad.addColorStop(.5, '#888'); grad.addColorStop(1, '#fff');
+  if (S.panel === 'c4') {
+    /* 四色测试：黑 → 红 → 黄 → 白 渐变，红黄都能体现 */
+    grad.addColorStop(0, '#000'); grad.addColorStop(.38, '#E62020');
+    grad.addColorStop(.68, '#FFD800'); grad.addColorStop(1, '#fff');
+  } else {
+    grad.addColorStop(0, '#000'); grad.addColorStop(.5, '#888'); grad.addColorStop(1, '#fff');
+  }
   x.fillStyle = grad; x.fillRect(0, 0, c.width, c.height);
   x.fillStyle = '#fff'; x.beginPath(); x.arc(180, 195, 90, 0, Math.PI * 2); x.fill();
   x.fillStyle = '#000'; x.beginPath(); x.arc(190, 185, 70, 0, Math.PI * 2); x.fill();
@@ -982,6 +1194,41 @@ $('testLink').addEventListener('click', e => {
   img.src = c.toDataURL('image/png');
 });
 
+/* 屏幕型号切换（黑白 / 四色），选择记入 localStorage */
+$('panelBw').addEventListener('click', () => setPanel('bw'));
+$('panelC4').addEventListener('click', () => setPanel('c4'));
+
+function setPanel(p){
+  if (S.panel === p) return;
+  S.panel = p;
+  try { localStorage.setItem('xepr-panel', p); } catch {}
+  updatePanelUI();
+  if (S.img) process(); else drawPlaceholder();
+}
+
+function updatePanelUI(){
+  const c4 = S.panel === 'c4';
+  $('panelBw').classList.toggle('on', !c4);
+  $('panelC4').classList.toggle('on', c4);
+  $('mastSpec').textContent = c4 ? '128 × 250 · 2-BIT · 4C' : '256 × 122 · 1-BIT · BW';
+  $('devCap').textContent = c4 ? '250 × 122 · 黑 / 白 / 红 / 黄 · 2 bit' : '250 × 122 · 黑 / 白 · 1 bit';
+  $('modeLabel').textContent = c4 ? '四色量化模式' : '二值化模式';
+  $('modeDither').textContent = c4 ? '抖动（误差扩散）' : '抖动 Floyd–Steinberg';
+  $('modeThresh').textContent = c4 ? '最近色' : '阈值';
+  $('threshRow').classList.toggle('off', c4 || S.mode !== 'threshold');
+  $('invBtn').style.display = c4 ? 'none' : '';
+  $('hexEmpty').innerHTML = c4
+    ? '转换后在此生成 NFC 数据<br>格式 XEPR2 二进制帧（2bpp · 8000 B 图像）· 仅支持 Web NFC 二进制写入'
+    : '转换后在此生成 NFC 数据<br>格式 XEPR1|256|122|&lt;HEX&gt; · 附带 .bin 二进制下载';
+  $('protoBox').innerHTML = c4 ? PROTO_C4 : PROTO_BW;
+  $('step2').innerHTML = c4
+    ? '<b>2</b> 四色帧约 8 KB：用「写入到 XIAO」（Web NFC）或 .bin 写入 · Hex 文本超出 NFC 容量'
+    : '<b>2</b> 或：复制数据 → NFC Tools → 写入 → 添加记录 → 文本';
+  $('footNote').textContent = c4
+    ? '四色：2bpp 面板 RAM 镜像（128×250 · 每 gate 32 B）· 黑 00 / 白 01 / 黄 10 / 红 11 · 全刷约 20–25 s'
+    : '位序 MSB-first · 1=白 0=黑 · framebuffer 每行 32 B 对齐（与 Seeed 256×122 驱动一致）';
+}
+
 /* 模式切换 */
 $('modeDither').addEventListener('click', () => setMode('dither'));
 $('modeThresh').addEventListener('click', () => setMode('threshold'));
@@ -989,7 +1236,7 @@ function setMode(m){
   S.mode = m;
   $('modeDither').classList.toggle('on', m === 'dither');
   $('modeThresh').classList.toggle('on', m === 'threshold');
-  $('threshRow').classList.toggle('off', m !== 'threshold');
+  $('threshRow').classList.toggle('off', S.panel === 'c4' || m !== 'threshold');
   process();
 }
 
@@ -1057,7 +1304,9 @@ $('nfcBtn').addEventListener('click', async () => {
         data: S.bin,             // 3920 B XEPR 帧（含 CRC32）
       }],
     });
-    st.textContent = '✓ 已写入，墨水屏应已刷新显示图片';
+    st.textContent = S.panel === 'c4'
+      ? '✓ 已写入，四色屏全刷约需 20–25 秒，期间请保持供电不要断开…'
+      : '✓ 已写入，墨水屏应已刷新显示图片';
     setTimeout(() => { if (st.textContent.startsWith('✓')) st.textContent = ''; }, 5000);
   } catch (e) {
     const reason = (e && (e.message || e.name)) ? (e.message || e.name) : String(e);
@@ -1106,6 +1355,8 @@ window.addEventListener('resize', () => {
 });
 
 /* 启动 */
+try { if (localStorage.getItem('xepr-panel') === 'c4') S.panel = 'c4'; } catch {}
+updatePanelUI();
 drawDitherStrip();
 drawPlaceholder();
 </script>

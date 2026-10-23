@@ -386,7 +386,7 @@
   <section class="panel output">
     <div class="panel-title">
       <span>④ 输出 · NFC 数据</span>
-      <span class="hint">XEPR1｜宽｜高｜HEX</span>
+      <span class="hint" id="outHint">XEPR1｜宽｜高｜HEX</span>
     </div>
 
     <div id="outEmpty">
@@ -405,9 +405,18 @@
         <div class="hex-label"><span>NFC Payload（Text Record）</span><span id="hexCount"></span></div>
         <div class="hexbox dim" id="hexbox"></div>
       </div>
+      <div id="hexSection4c" style="display:none">
+        <div class="hex-label"><span>段 A（前半 4000 B 图像 + 整帧 CRC32）</span><span id="hexCountA"></span></div>
+        <div class="hexbox dim" id="hexboxA"></div>
+        <div class="hex-label"><span>段 B（后半 4000 B 图像）</span><span id="hexCountB"></span></div>
+        <div class="hexbox dim" id="hexboxB"></div>
+        <div class="hint" style="margin-top:6px">NFC 写入 app 分两次写文本记录：先 A 后 B，B 写入完成后屏幕开始全刷（顺序颠倒亦可）</div>
+      </div>
       <div class="actions">
         <button class="btn btn-primary" id="nfcBtn" style="display:none">写入到 XIAO（Web NFC）</button>
         <button class="btn btn-primary" id="copyBtn">复制 NFC 数据</button>
+        <button class="btn btn-primary" id="copyBtnA" style="display:none">复制 A 段文本</button>
+        <button class="btn btn-primary" id="copyBtnB" style="display:none">复制 B 段文本</button>
         <button class="btn btn-ghost" id="dlBtn">下载 xiao_epaper.bin</button>
       </div>
       <div class="nfc-status" id="nfcStatus"></div>
@@ -475,7 +484,9 @@ const S = {
   _rot: null, _rotImg: null, _rotDeg: -1,   // 旋转结果缓存
   _quiet: false,
   panel: 'bw',        // 'bw' | 'c4'（2.13" 四色 GDEY0213F51）
-  hexStr: null,       // 最近一次结果
+  hexStr: null,       // 最近一次结果（黑白单段）
+  hexA: null,         // 四色分段文本 A（"XEPR2A|CRC|前半图像"）
+  hexB: null,         // 四色分段文本 B（"XEPR2B|后半图像"）
   bin: null,
   crc: 0,
 };
@@ -849,7 +860,10 @@ function buildOutputs(fb){
   $('statImg').textContent = '3,904 B';
   $('statBin').textContent = '3,920 B';
   $('hexSection').style.display = '';
+  $('hexSection4c').style.display = 'none';
   $('copyBtn').style.display = '';
+  $('copyBtnA').style.display = 'none';
+  $('copyBtnB').style.display = 'none';
   $('statHex').textContent = hex.length.toLocaleString() + ' 字符';
   $('statCrc').textContent = crc.toString(16).toUpperCase().padStart(8, '0');
   $('hexCount').textContent = `共 ${hex.length.toLocaleString()} 字符，已截断显示`;
@@ -857,8 +871,9 @@ function buildOutputs(fb){
 }
 
 /* 四色输出：XEPR2 二进制帧（w=128 h=250 fmt=2 len=8000 + CRC32）。
- * 8000 B 图像的 Hex 文本（16000+ 字符）远超 NFC 8 KB 预算，只走
- * Web NFC / .bin 二进制通道。 */
+ * 8000 B 图像的整段 Hex 文本（16000+ 字符）超 NFC 8 KB 预算，改拆成
+ * A/B 两段（各 ~8k 字符），用两次 NFC 文本写入；A 段携带整帧 CRC32，
+ * 固件拼合后校验。 */
 function buildOutputs4c(ram){
   const bin = new Uint8Array(12 + 8000 + 4);
   bin.set([0x58, 0x45, 0x50, 0x52], 0);        // "XEPR"
@@ -871,17 +886,29 @@ function buildOutputs4c(ram){
   const crc = crc32(bin.subarray(0, bin.length - 4));
   bin[8012] = crc >>> 24; bin[8013] = (crc >>> 16) & 0xFF;
   bin[8014] = (crc >>> 8) & 0xFF; bin[8015] = crc & 0xFF;
-  S.bin = bin; S.crc = crc; S.hexStr = null;
+  S.bin = bin; S.crc = crc;
 
-  // 界面（无 Hex 文本通道）
+  const crcHex = crc.toString(16).toUpperCase().padStart(8, '0');
+  S.hexA = 'XEPR2A|' + crcHex + '|' + bytesToHex(ram.subarray(0, 4000));
+  S.hexB = 'XEPR2B|' + bytesToHex(ram.subarray(4000));
+  S.hexStr = null;
+
+  // 界面（分段文本 + 二进制两条通道）
   $('outEmpty').style.display = 'none';
   $('outBody').style.display = '';
   $('statImg').textContent = '8,000 B';
   $('statBin').textContent = '8,016 B';
-  $('statHex').textContent = '不适用';
+  $('statHex').textContent = 'A 段 8,016 字 · B 段 8,007 字';
+  $('statCrc').textContent = crcHex;
   $('hexSection').style.display = 'none';
+  $('hexSection4c').style.display = '';
   $('copyBtn').style.display = 'none';
-  $('statCrc').textContent = crc.toString(16).toUpperCase().padStart(8, '0');
+  $('copyBtnA').style.display = '';
+  $('copyBtnB').style.display = '';
+  $('hexCountA').textContent = `A 段共 ${S.hexA.length.toLocaleString()} 字符，已截断显示`;
+  $('hexboxA').textContent = S.hexA.slice(0, 450);
+  $('hexCountB').textContent = `B 段共 ${S.hexB.length.toLocaleString()} 字符，已截断显示`;
+  $('hexboxB').textContent = S.hexB.slice(0, 450);
 }
 
 function bytesToHex(bytes){
@@ -1217,15 +1244,16 @@ function updatePanelUI(){
   $('modeThresh').textContent = c4 ? '最近色' : '阈值';
   $('threshRow').classList.toggle('off', c4 || S.mode !== 'threshold');
   $('invBtn').style.display = c4 ? 'none' : '';
+  $('outHint').textContent = c4 ? 'XEPR2 二进制帧 · XEPR2A/B 分段文本' : 'XEPR1｜宽｜高｜HEX';
   $('hexEmpty').innerHTML = c4
-    ? '转换后在此生成 NFC 数据<br>格式 XEPR2 二进制帧（2bpp · 8000 B 图像）· 仅支持 Web NFC 二进制写入'
+    ? '转换后在此生成 NFC 数据<br>XEPR2 二进制帧（2bpp · 8000 B 图像）+ A/B 两段文本写入'
     : '转换后在此生成 NFC 数据<br>格式 XEPR1|256|122|&lt;HEX&gt; · 附带 .bin 二进制下载';
   $('protoBox').innerHTML = c4 ? PROTO_C4 : PROTO_BW;
   $('step2').innerHTML = c4
-    ? '<b>2</b> 四色帧约 8 KB：用「写入到 XIAO」（Web NFC）或 .bin 写入 · Hex 文本超出 NFC 容量'
+    ? '<b>2</b> 或：NFC Tools → 写入 → 添加记录 → 文本，先贴 A 段、再贴 B 段（各写一次）'
     : '<b>2</b> 或：复制数据 → NFC Tools → 写入 → 添加记录 → 文本';
   $('footNote').textContent = c4
-    ? '四色：2bpp 面板 RAM 镜像（128×250 · 每 gate 32 B）· 黑 00 / 白 01 / 黄 10 / 红 11 · 全刷约 20–25 s'
+    ? '四色：2bpp 面板 RAM 镜像（128×250 · 每 gate 32 B）· 黑 00 / 白 01 / 黄 10 / 红 11 · 全刷约 20–25 s · 文本写入分 A/B 两段'
     : '位序 MSB-first · 1=白 0=黑 · framebuffer 每行 32 B 对齐（与 Seeed 256×122 驱动一致）';
 }
 
@@ -1262,20 +1290,27 @@ $('rotBtn').addEventListener('click', () => {
   process();
 });
 
-/* 复制 */
-$('copyBtn').addEventListener('click', async () => {
-  if (!S.hexStr) return;
-  const btn = $('copyBtn');
+/* 复制（黑白单段 / 四色 A、B 段共用） */
+async function copyTextToClipboard(text, btn, doneLabel){
   let ok = false;
-  try { await navigator.clipboard.writeText(S.hexStr); ok = true; }
-  catch { ok = fallbackCopy(S.hexStr); }
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch { ok = fallbackCopy(text); }
   if (ok) {
     const old = btn.textContent;
-    btn.textContent = '已复制 ✓';
+    btn.textContent = doneLabel;
     setTimeout(() => { btn.textContent = old; }, 1600);
   } else {
     showError('复制失败，请手动选择复制');
   }
+}
+$('copyBtn').addEventListener('click', () => {
+  if (S.hexStr) copyTextToClipboard(S.hexStr, $('copyBtn'), '已复制 ✓');
+});
+$('copyBtnA').addEventListener('click', () => {
+  if (S.hexA) copyTextToClipboard(S.hexA, $('copyBtnA'), 'A 段已复制 ✓');
+});
+$('copyBtnB').addEventListener('click', () => {
+  if (S.hexB) copyTextToClipboard(S.hexB, $('copyBtnB'), 'B 段已复制 ✓');
 });
 
 /* =====================================================================
